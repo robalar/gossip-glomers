@@ -38,7 +38,7 @@ func main() {
 	state := State{seen: *set.New[int](10), known: make(map[string]set.Set[int])}
 
 	// Gossip every 500 milliseconds
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(700 * time.Millisecond)
 	go func() {
 		for {
 			<-ticker.C // block until we get a tick
