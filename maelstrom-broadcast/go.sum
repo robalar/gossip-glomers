@@ -1,2 +1,4 @@
+github.com/hashicorp/go-set/v2 v2.1.0 h1:iERPCQWks+I+4bTgy0CT2myZsCqNgBg79ZHqwniohXo=
+github.com/hashicorp/go-set/v2 v2.1.0/go.mod h1:6q4nh8UCVZODn2tJ5RbJi8+ki7pjZBsAEYGt6yaGeTo=
 github.com/jepsen-io/maelstrom/demo/go v0.0.0-20231205140322-b59de21565d8 h1:kcScU5kzbLfjNlYFK1R8ItUDGULTvRNKBlIxHzl0sGU=
 github.com/jepsen-io/maelstrom/demo/go v0.0.0-20231205140322-b59de21565d8/go.mod h1:i6aVIs5AIOOaQF1lAisBm7DDeWM1Iopf+26UxjagsCU=
