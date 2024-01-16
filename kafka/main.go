@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 
@@ -13,19 +14,27 @@ type LogEntry struct {
 }
 
 type State struct {
-	Logs            map[string][]LogEntry
-	CommitedOffsets map[string]int
+	Logs             maelstrom.KV
+	CommittedOffsets maelstrom.KV
 }
 
-func NewState() State {
+func NewState(n *maelstrom.Node) State {
 	return State{
-		Logs:            make(map[string][]LogEntry),
-		CommitedOffsets: make(map[string]int),
+		Logs: *maelstrom.NewLinKV(n), CommittedOffsets: *maelstrom.NewSeqKV(n),
 	}
 }
 
-func (l *State) append_to_log(key string, msg int) int {
-	log := l.Logs[key] // TODO: what if `key` is not present?
+func (l *State) read_logs(key string) []LogEntry {
+	var logs []LogEntry
+	if err := l.Logs.ReadInto(context.TODO(), key, &logs); err != nil {
+		return make([]LogEntry, 0)
+	}
+
+	return logs
+}
+
+func (l *State) append_to_log(key string, msg int) (int, error) {
+	log := l.read_logs(key)
 
 	var next_offset int
 	if prev_idx := len(log) - 1; prev_idx >= 0 {
@@ -33,14 +42,18 @@ func (l *State) append_to_log(key string, msg int) int {
 		next_offset = prev.Offset + 1
 	}
 
-	l.Logs[key] = append(log, LogEntry{Offset: next_offset, Message: msg})
+	appended_log := append(log, LogEntry{Offset: next_offset, Message: msg})
 
-	return next_offset
+	if err := l.Logs.CompareAndSwap(context.TODO(), key, log, appended_log, true); err != nil {
+		return 0, err
+	}
+
+	return next_offset, nil
 }
 
 func (l *State) poll(key string, offset int) [][]int {
-	log_entries := l.Logs[key] // TODO: what if `key` is not present?
-	log.Printf("key: %s, offset: %d, log_entries: %#v", key, offset, log_entries)
+	log_entries := l.read_logs(key)
+
 	var to_send [][]int
 	for _, log_entry := range log_entries {
 		if log_entry.Offset >= offset {
@@ -49,6 +62,15 @@ func (l *State) poll(key string, offset int) [][]int {
 	}
 
 	return to_send
+}
+
+func (l *State) commit_offset(key string, offset int) error {
+	// FIXME: what if offset in message are prior to the ones in state?
+	return l.CommittedOffsets.Write(context.TODO(), key, offset)
+}
+
+func (l *State) read_committed_offset(key string) (int, error) {
+	return l.CommittedOffsets.ReadInt(context.TODO(), key)
 }
 
 type SendMessage struct {
@@ -75,7 +97,7 @@ type ListCommittedOffsetsMessage struct {
 func main() {
 	n := maelstrom.NewNode()
 
-	state := NewState()
+	state := NewState(n)
 
 	n.Handle("send", func(msg maelstrom.Message) error {
 		var m SendMessage
@@ -83,7 +105,10 @@ func main() {
 			return err
 		}
 
-		offset := state.append_to_log(m.Key, m.Msg)
+		offset, err := state.append_to_log(m.Key, m.Msg)
+		if err != nil {
+			return err
+		}
 		return n.Reply(msg, map[string]any{"type": "send_ok", "offset": offset})
 	})
 
@@ -92,7 +117,6 @@ func main() {
 		if err := json.Unmarshal(msg.Body, &m); err != nil {
 			return err
 		}
-		log.Printf("offsets: %#v", m.Offsets)
 
 		messages := make(map[string][][]int)
 		for key, offset := range m.Offsets {
@@ -109,7 +133,9 @@ func main() {
 		}
 
 		for k, v := range m.Offsets {
-			state.CommitedOffsets[k] = v // TODO: what if offset in message are prior to the ones in state?
+			if err := state.commit_offset(k, v); err != nil {
+				return err
+			}
 		}
 
 		return n.Reply(msg, map[string]string{"type": "commit_offsets_ok"})
@@ -123,10 +149,12 @@ func main() {
 
 		offsets := make(map[string]int)
 		for _, key := range m.Keys {
-			offset, ok := state.CommitedOffsets[key]
-			if ok {
-				offsets[key] = offset
+			offset, err := state.read_committed_offset(key)
+			if err != nil {
+				return err
 			}
+
+			offsets[key] = offset
 		}
 
 		return n.Reply(msg, map[string]any{"type": "list_committed_offsets_ok", "offsets": offsets})
